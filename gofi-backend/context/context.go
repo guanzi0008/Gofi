@@ -4,19 +4,21 @@ import (
 	"flag"
 	"fmt"
 	"github.com/go-xorm/xorm"
+	"gofi/env"
+	"path/filepath"
+
 	//import sqlite3 driver
 	_ "github.com/mattn/go-sqlite3"
 	"github.com/sirupsen/logrus"
 	"gofi/models"
 	"net"
 	"os"
-	"path/filepath"
 	"strings"
 	"time"
 )
 
 //version ,will be replaced at compile time by [-ldflags="-X 'gofi/context.Version=vX.X.X'"]
-var version string = "UNKOWN VERSION"
+var version = "UNKOWN VERSION"
 
 const (
 	//DefaultPort default port to listen Gofi监听的默认端口号
@@ -27,19 +29,10 @@ const (
 
 //Context 上下文对象
 type Context struct {
-	Version           string
-	Port              string
-	DatabaseName      string
-	AppName           string
-	ServerAddress     string
-	ServerIP          string //ServerIP server side ip for web client to request,default is lan ip
-	WorkDir           string
-	DefaultStorageDir string
-	CustomStorageDir  string
-	LogDir            string
-	DatabaseFilePath  string
-	Orm               *xorm.Engine
-	settings          *models.Settings
+	Port          string
+	ServerAddress string
+	ServerIP      string //ServerIP server side ip for web client to request,default is lan ip
+	Orm           *xorm.Engine
 }
 
 var instance = new(Context)
@@ -61,13 +54,6 @@ func bindFlags() {
 //InitContext 初始化Context,只能初始化一次
 func InitContext() {
 	flag.Parse()
-	instance.Version = version
-	instance.AppName = "gofi"
-	instance.WorkDir = instance.getWorkDirectoryPath()
-	instance.DatabaseName = instance.AppName + ".db"
-	instance.DatabaseFilePath = filepath.Join(instance.WorkDir, instance.DatabaseName)
-	instance.DefaultStorageDir = filepath.Join(instance.WorkDir, "storage")
-	instance.LogDir = filepath.Join(instance.WorkDir, "log")
 
 	// if ip is empty, obtain lan ip to instead.
 	if instance.ServerIP == "" || !CheckIP(instance.ServerIP) {
@@ -75,8 +61,6 @@ func InitContext() {
 	}
 	instance.ServerAddress = instance.ServerIP + ":" + instance.Port
 	instance.Orm = instance.initDatabase()
-	instance.settings = instance.queryAppSettings()
-	instance.CustomStorageDir = instance.settings.CustomStoragePath
 }
 
 //CheckIP 校验IP是否有效
@@ -89,22 +73,38 @@ func Get() *Context {
 	return instance
 }
 
-//GetSettings 获取当前设置项
-func (context *Context) GetSettings() models.Settings {
-	return *context.settings
+func (context *Context) GetAppVersion() string {
+	return version
+}
+
+func (context *Context) GetAppName() string {
+	return "gofi"
 }
 
 //GetStorageDir 获取当前仓储目录
 func (context *Context) GetStorageDir() string {
-	if len(context.CustomStorageDir) == 0 {
-		return context.DefaultStorageDir
+	configuration := context.QueryConfiguration()
+	if len(configuration.CustomStoragePath) == 0 {
+		return context.GetDefaultStorageDir()
 	}
-	return context.CustomStorageDir
+	return configuration.CustomStoragePath
+}
+
+func (context *Context) GetDefaultStorageDir() string {
+	return filepath.Join(context.GetWorkDir(), "storage")
+}
+
+func (context *Context) GetDatabaseFilePath() string {
+	return filepath.Join(context.GetWorkDir(), context.GetAppName()+".db")
+}
+
+func (context *Context) GetLogDir() string {
+	return filepath.Join(context.GetWorkDir(), "log")
 }
 
 func (context *Context) initDatabase() *xorm.Engine {
 	// connect to database
-	engine, err := xorm.NewEngine("sqlite3", context.DatabaseFilePath)
+	engine, err := xorm.NewEngine("sqlite3", context.GetDatabaseFilePath())
 	if err != nil {
 		logrus.Println(err)
 		panic("failed to connect database")
@@ -114,49 +114,48 @@ func (context *Context) initDatabase() *xorm.Engine {
 		logrus.Info("on environment,skip database sync")
 	} else {
 		// migrate database
-		if err := engine.Sync2(new(models.Settings)); err != nil {
+		if err := engine.Sync2(new(models.Configuration)); err != nil {
 			logrus.Error(err)
 		}
+	}
+
+	if env.IsDevelop() {
+		engine.ShowSQL(true)
 	}
 
 	return engine
 }
 
-func (context *Context) queryAppSettings() *models.Settings {
-	var pSettings = new(models.Settings)
+func (context *Context) QueryConfiguration() *models.Configuration {
+	var config = new(models.Configuration)
 	//obtain first record
-	if has, _ := context.Orm.Get(pSettings); !has {
+	if has, _ := context.Orm.Get(config); !has {
 		//create new record if there is no record exist
-		pSettings = &models.Settings{
-			AppPath:            context.WorkDir,
+		config = &models.Configuration{
+			AppPath:            context.GetWorkDir(),
 			Initialized:        false,
 			CustomStoragePath:  "",
-			DefaultStoragePath: context.DefaultStorageDir,
-			DatabaseFilePath:   context.DatabaseFilePath,
-			LogDirectoryPath:   context.LogDir,
-			DefaultLanguage:    "zh-CN",
+			DefaultStoragePath: context.GetDefaultStorageDir(),
+			DatabaseFilePath:   context.GetDatabaseFilePath(),
+			LogDirectoryPath:   context.GetLogDir(),
 			ThemeStyle:         "light", // light or dark
-			ThemeColor:         "#1890FF",
-			NavMode:            "top", // top or side
+			NavMode:            "top",   // top or side
 			Created:            time.Time{},
 			Updated:            time.Time{},
 		}
 
-		if _, err := context.Orm.InsertOne(pSettings); err != nil {
+		if _, err := context.Orm.InsertOne(config); err != nil {
 			logrus.Error(err)
 		}
 	}
 
-	pSettings.Version = context.Version
+	config.Version = context.GetAppVersion()
+	config.AppPath = context.GetWorkDir()
+	config.DefaultStoragePath = context.GetDefaultStorageDir()
+	config.DatabaseFilePath = context.GetDatabaseFilePath()
+	config.LogDirectoryPath = context.GetLogDir()
 
-	return pSettings
-}
-
-//AfterUpdateSettings 设置更新后，需要更新Context上下文中的文件仓储路径
-func (context *Context) AfterUpdateSettings(bean interface{}) {
-	context.settings = bean.(*models.Settings)
-	context.CustomStorageDir = context.settings.CustomStoragePath
-	logrus.Infof("AfterUpdateSettings current storage dir is %s", context.settings.CustomStoragePath)
+	return config
 }
 
 //IsTestEnvironment 当前是否测试环境
@@ -169,8 +168,8 @@ func (context *Context) IsTestEnvironment() bool {
 	return false
 }
 
-//getWorkDirectoryPath 获取工作目录
-func (context *Context) getWorkDirectoryPath() string {
+//GetWorkDir 获取工作目录
+func (context *Context) GetWorkDir() string {
 	dir, err := os.Getwd()
 	if err != nil {
 		return ""
@@ -186,7 +185,6 @@ func (context *Context) GetLanIP() string {
 		fmt.Println(err)
 		os.Exit(1)
 	}
-
 
 	logrus.Infof("print all ip address: %v\n\t", addresses)
 

@@ -24,7 +24,7 @@ func init() {
 }
 
 func main() {
-	logrus.Infof("Gofi is running on %v，current environment is %s,version is %s\n", context.Get().ServerAddress, env.Current(), context.Get().Version)
+	logrus.Infof("Gofi is running on %v，current environment is %s,version is %s\n", context.Get().ServerAddress, env.Current(), context.Get().GetAppVersion())
 	app := newApp()
 	_ = app.Run(iris.Addr(":"+context.Get().Port), iris.WithoutServerError(iris.ErrServerClosed))
 }
@@ -85,8 +85,8 @@ func api(app *iris.Application) {
 		}
 	}).AllowMethods(iris.MethodOptions)
 	{
-		api.Get("/setting", controllers.GetSetting)
-		api.Post("/setting", controllers.UpdateSetting)
+		api.Get("/configuration", controllers.GetConfiguration)
+		api.Post("/configuration", controllers.UpdateConfiguration)
 		api.Post("/setup", controllers.Setup)
 		api.Get("/files", controllers.ListFiles)
 		api.Get("/file", controllers.FileDetail)
