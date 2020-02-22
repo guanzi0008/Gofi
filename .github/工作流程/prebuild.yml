@@ -44,8 +44,8 @@ jobs:
       - name: Excute Build Script
         run: ./build.sh
 
-      # # 压缩产物
-     - name: Compress
+      # 压缩产物
+      - name: Compress
        uses: docker://gact/upx:latest
        with:
          dir: './output'
@@ -56,7 +56,7 @@ jobs:
         run: du -ah ./output
 
       # # 上传临时编译产物
-     - name: Upload Snapshot Build Product
+      - name: Upload Snapshot Build Product
        uses: actions/upload-artifact@v1
        with:
          name: Snapshot
